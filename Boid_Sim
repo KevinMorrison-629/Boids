@@ -1,0 +1,292 @@
+
+import sys
+import numpy as np
+import pygame
+from quadtree import Quadtree, Rectangle, Point
+
+
+
+class Boid():
+    def __init__(self, boid_id, bounds):
+        self.boid_id = boid_id
+        self.maxForce = 0.1
+        self.maxSpeed = 0.2 # DEFAULT: 0.15
+        
+        self.max_Coords = np.array(bounds)
+        
+        self.position = np.multiply(np.random.uniform(0.2,0.8,[2]), self.max_Coords)
+        self.velocity = np.multiply(np.random.uniform(-0.8,0.8,[2]), self.maxSpeed)
+        
+        self.nextVel = self.velocity
+        self.nextPos = self.position
+        
+        
+        #self.perceptionRadius = np.ndarray.min(np.divide(np.ndarray.min(self.max_Coords), self.maxSpeed)) / 10
+        self.crossBool = True
+        self.viewAngle = 25
+        self.perceptionRadius = 60
+        self.avoidance_multiplier = 0.0 # DEFAULT: 0.05
+        self.alignment_multiplier = 0.01 # DEFAULT: 0.01
+        self.separation_multiplier = 0.005 # DEFAULT: 0.035
+        self.cohesion_multiplier = 0.001 # DEFAULT: 0.02
+        self.randomness_multiplier = 0.0001 #0.0001
+        
+        self.currentlySeen = []
+    
+    def update(self):
+        ''''''
+        self.position = self.nextPos
+        self.velocity = self.nextVel
+        
+        if self.crossBool:
+            self.cross_over()
+    
+    def calculate_next(self, dt, flock, qtree):
+        ''''''
+        align_avg_heading, sep_avg_heading, \
+            coh_avg_heading, align_count, \
+            sep_count, coh_count = self.calc_heading(flock, qtree)
+        
+        align_force = self.alignment(align_avg_heading, align_count)
+        cohesion_force = self.cohesion(coh_avg_heading, coh_count)
+        separation_force = self.separation(sep_avg_heading, sep_count)
+        avoidance_force = self.avoidance()
+        randomness_force = self.randomness()
+        #randomness_force = np.zeros(2)
+        #avoidance_force = np.zeros(2)
+        
+        force = align_force + cohesion_force + separation_force + avoidance_force + randomness_force
+        
+        force_mag = np.sqrt(force[0]**2 + force[1]**2)
+        
+        if force_mag > self.maxForce * 0.001:
+            force = force * self.maxForce / np.sqrt(force[0]**2 + force[1]**2)
+        
+        self.nextVel = (force * dt) + self.velocity
+        
+        speed = np.sqrt(self.nextVel[0]**2 + self.nextVel[1]**2)
+        if speed > self.maxSpeed:
+            self.nextVel = self.nextVel * self.maxSpeed / speed
+        
+        self.nextPos = (self.nextVel * dt) + self.position
+        
+        if self.crossBool:
+            self.cross_over()
+    
+    def cohesion(self, coh_avg_heading, coh_count):
+        ''''''
+        if coh_count > 0:
+            heading = coh_avg_heading / coh_count
+            heading = heading - self.position
+            
+            steering = self.cohesion_multiplier * heading * 0.001
+            #steering = self.nextVel * (1-self.cohesion_multiplier) + self.cohesion_multiplier * heading
+            #steering = steering * self.maxForce / np.sqrt(steering[0]**2 + steering[1]**2)
+            
+        else:
+            steering = np.zeros(2)
+        return steering
+    
+    
+    
+    def separation(self, sep_avg_heading, sep_count):
+        ''''''
+        if sep_count > 0:
+            #heading = heading / sep_count
+            heading = sep_avg_heading / sep_count
+            
+            steering = self.separation_multiplier * heading
+            #steering = self.nextVel * (1-self.separation_multiplier) + self.separation_multiplier * heading
+            #steering = steering * self.maxForce / np.sqrt(steering[0]**2 + steering[1]**2)
+            
+        else:
+            steering = np.zeros(2)
+        return steering
+    
+    
+    def alignment(self, align_avg_heading, align_count):
+        ''''''
+        if align_count > 0:
+            heading = align_avg_heading / align_count
+            #heading = heading - self.velocity
+            
+            steering = self.alignment_multiplier * heading
+            #steering = self.nextVel * (1-self.alignment_multiplier) + self.alignment_multiplier * heading
+            #steering = steering * self.maxForce / np.sqrt(steering[0]**2 + steering[1]**2)
+            
+        else:
+            steering = np.zeros(2)
+        return steering 
+    
+    def avoidance(self):
+        ''''''
+        
+        if self.avoidance_multiplier <= 0.001:
+            return np.zeros(2)
+        x = self.position[0]
+        y = self.position[1]        
+        
+        steering = np.zeros(2)
+        
+        den_1 = (x**2 - x*self.max_Coords[0])
+        den_2 = (y**2 - y*self.max_Coords[1])
+
+        steering[0] = (x-self.max_Coords[0]/2) / den_1
+        steering[1] = (y-self.max_Coords[1]/2) / den_2
+        
+        return steering * self.avoidance_multiplier
+    
+    def calc_heading(self, flock, qtree):
+        align_avg_heading = np.array([0,0])
+        sep_avg_heading = np.array([0,0])
+        coh_avg_heading = np.array([0,0])
+        
+        align_count = 0
+        sep_count = 0
+        coh_count = 0
+        
+        searchRange = Rectangle(self.position[0], self.position[1],
+                                self.perceptionRadius, self.perceptionRadius)
+        found_points = qtree.query(searchRange)
+        
+        foundBoids = []
+        for each in found_points:
+            foundBoids.append(each.ParticleObj)
+        foundBoids = self.inView(foundBoids)
+        
+        for each in foundBoids:      
+        #for point in found_points:
+            #each = point.ParticleObj
+            if each != self:
+                dist = np.linalg.norm(self.position - each.position)
+                # alignment heading
+                align_avg_heading = align_avg_heading + (each.velocity)
+                align_count += 1
+                
+                # separation heading
+                diff = (self.position - each.position) / (dist**2)
+                sep_avg_heading = sep_avg_heading + diff
+                sep_count += 1
+                
+                # cohesion heading
+                coh_avg_heading = coh_avg_heading + each.position
+                coh_count += 1
+        
+        return align_avg_heading, sep_avg_heading, coh_avg_heading, align_count, sep_count, coh_count
+    
+    
+    def randomness(self):
+        ''''''
+        return np.random.uniform(-0.5, 0.5, [2]) * self.maxSpeed * self.randomness_multiplier * 0.0001
+    
+    def cross_over(self):
+        '''Moves Boids that reach the edges to the other side of the map'''
+        if self.position[0] < 0:
+            self.position[0] = self.max_Coords[0]
+        if self.position[0] > self.max_Coords[0]:
+            self.position[0] = 0
+        
+        if self.position[1] < 0:
+            self.position[1] = self.max_Coords[1]
+        if self.position[1] > self.max_Coords[1]:
+            self.position[1] = 0
+
+    def inView(self, nearbyBoids):
+        if self.viewAngle == 360:
+            return nearbyBoids
+        seen = []
+        self.currentlySeen = []
+        for each in nearbyBoids:
+            if each != self:
+                rel_pos_mag = np.linalg.norm(each.position - self.position)
+                dir_vec_mag = np.sqrt(self.velocity[0]**2 + self.velocity[1]**2)
+                
+                rel_pos = (each.position - self.position) / rel_pos_mag
+                dir_vector = self.velocity / dir_vec_mag
+                #np.dot(rel_pos, dir_vector) / (rel_pos_mag*dir_vec_mag)
+                if abs(np.arccos(np.dot(rel_pos, dir_vector))) * (360/(2*np.pi)) <= self.viewAngle*2:
+                    seen.append(each)
+                    self.currentlySeen.append(each)
+        return seen
+
+if __name__ == '__main__':
+    
+    display_width = 1800
+    display_height = 800
+    
+    numBoids = 150
+    nCapacity = 4
+
+    boundary = Rectangle(display_width/2, display_height/2, display_width/2, display_height/2)
+    
+    flock = []
+    for i in range(numBoids):
+        flock.append(Boid(i, [display_width, display_height]))
+    
+    
+    pygame.init()
+
+    gameDisplay = pygame.display.set_mode((display_width,display_height))
+    pygame.display.set_caption('Boid Simulation')
+    
+    black = (0,0,0)
+    white = (255, 255, 255)
+    
+    clock = pygame.time.Clock()
+
+    crashed = False
+    
+    
+    while not crashed:
+        gameDisplay.fill(black)
+        dt = clock.tick(60)
+        print(clock.get_fps())
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                crashed = True
+            #print(event)
+        try:
+            qtree = Quadtree(boundary, nCapacity)
+            for each in flock:
+                qtree.insert(Point(each.position[0], each.position[1], each))
+            qtree.show(gameDisplay, (255,0,0)) # enable/ disable to show quadtree
+            for each in flock:
+                each.calculate_next(dt, flock, qtree)
+            for each in flock:
+                each.update()
+                pygame.draw.circle(gameDisplay, white, each.position, 3)
+            
+            ## enable/ disable the following to show quadtree search on single boid
+            testBoid = flock[0]
+            searchRange = Rectangle(testBoid.position[0], testBoid.position[1],
+                                    testBoid.perceptionRadius, testBoid.perceptionRadius)
+            rect = pygame.Rect(searchRange.x-searchRange.w, searchRange.y-searchRange.h,
+                               searchRange.w * 2, searchRange.h * 2)
+            pygame.draw.rect(gameDisplay, (0, 255,0), rect, width=1)            
+            found_points = qtree.query(searchRange)
+            for each in found_points:
+                pygame.draw.circle(gameDisplay, (0,255,0), each.ParticleObj.position, 3)
+            for each in testBoid.currentlySeen:
+                pygame.draw.circle(gameDisplay, (255,0,255), each.position, 10, width=1)
+            
+            #try:
+                #boid_dir = testBoid.velocity / np.sqrt(testBoid.velocity[0]**2 + testBoid.velocity[1]**2)
+                #boid_dir = np.arccos(boid_dir[1]/boid_dir[0]+0j).real
+                #start_angle = boid_dir - testBoid.viewAngle*(np.pi/90)
+                #end_angle = boid_dir + testBoid.viewAngle*(np.pi/90)
+                
+                #print(start_angle)
+                #print(end_angle)
+                #pygame.draw.arc(gameDisplay, (255,0,255), rect, start_angle+np.pi/2, end_angle+np.pi/2, width=5)
+            
+        except Exception as exx:
+            #raise exx.with_traceback(sys.exc_info()[2])
+            print(exx)
+            crashed = True
+    
+        pygame.display.update()
+        
+    pygame.quit()
+    quit()
+    
