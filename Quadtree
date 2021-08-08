@@ -1,0 +1,220 @@
+
+import pygame
+import random
+
+
+
+
+class Point():
+    ''''''
+    def __init__(self, x,y, ParticleObj):
+        ''''''
+        self.x = x
+        self.y = y
+        self.ParticleObj = ParticleObj
+
+
+class Rectangle():
+    ''''''
+    def __init__(self, x,y,w,h):
+        ''''''
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    
+    def containsPoint(self, point):
+        ''''''
+        return (point.x >= self.x - self.w) and (point.x <= self.x + self.w) and \
+               (point.y >= self.y - self.h) and (point.y <= self.y + self.h)
+        
+    
+    def intersects(self, searchType, searchRange):
+        if searchType == 'box':
+            return not (searchRange.x - searchRange.w > self.x + self.w) or \
+                       (searchRange.x + searchRange.w < self.x - self.w) or \
+                       (searchRange.y - searchRange.h > self.y + self.h) or \
+                       (searchRange.y + searchRange.h < self.y - self.h)
+            
+            
+            
+        elif searchType == 'circle':
+            pass
+        else:
+            raise Exception("searchType not 'circle' or 'box'")
+
+
+class Quadtree():
+    ''''''
+    def __init__(self, boundary, capacity):
+        ''''''
+        self.boundary = boundary
+        self.capacity = capacity
+        
+        self.isDivided = False
+        
+        self.points = []
+
+    
+    def insert(self, point):
+        ''''''
+        if not self.boundary.containsPoint(point):
+            return False
+        
+        if len(self.points) < self.capacity:
+            self.points.append(point)
+            return True
+        elif not self.isDivided:
+            self.subdivide()
+        
+        if self.northeast.insert(point):
+            return True
+        elif self.northwest.insert(point):
+            return True
+        elif self.southeast.insert(point):
+            return True
+        elif self.southwest.insert(point):
+            return True
+        else:
+            print('ERROR')
+        
+    
+    def subdivide(self):
+        ''''''
+        nw = Rectangle(self.boundary.x + self.boundary.w/2, 
+                       self.boundary.y - self.boundary.h/2,
+                       self.boundary.w/2,
+                       self.boundary.h/2)
+        ne = Rectangle(self.boundary.x - self.boundary.w/2, 
+                       self.boundary.y - self.boundary.h/2,
+                       self.boundary.w/2,
+                       self.boundary.h/2)
+        sw = Rectangle(self.boundary.x + self.boundary.w/2, 
+                       self.boundary.y + self.boundary.h/2,
+                       self.boundary.w/2,
+                       self.boundary.h/2)
+        se = Rectangle(self.boundary.x - self.boundary.w/2, 
+                       self.boundary.y + self.boundary.h/2,
+                       self.boundary.w/2,
+                       self.boundary.h/2)
+        
+        self.northwest = Quadtree(nw, self.capacity)
+        self.northeast = Quadtree(ne, self.capacity)
+        self.southwest = Quadtree(sw, self.capacity)
+        self.southeast = Quadtree(se, self.capacity)
+        
+        self.isDivided = True
+
+    def show(self, display, color):
+        ''''''
+        rect = pygame.Rect(self.boundary.x-self.boundary.w, self.boundary.y-self.boundary.h,
+                           self.boundary.w * 2, self.boundary.h * 2)
+        
+        pygame.draw.rect(display, color, rect, width=1)
+        
+        if self.isDivided:
+            self.northeast.show(display, color)
+            self.northwest.show(display, color)
+            self.southeast.show(display, color)
+            self.southwest.show(display, color)
+    
+    def plotPoint(self, display, color, point):
+        ''''''
+        pygame.draw.circle(display, color, (point.x, point.y), 3)
+
+    def query(self, searchRange):
+        
+        found = []
+        
+        #searchType = 'circle'
+        searchType = 'box'
+        
+        if not self.boundary.intersects(searchType, searchRange):
+            return found
+        else:
+            for point in self.points:
+                if searchRange.containsPoint(point):
+                    found.append(point)
+            
+            if self.isDivided:
+                found += (self.northeast.query(searchRange))
+                found += (self.northwest.query(searchRange))
+                found += (self.southeast.query(searchRange))
+                found += (self.southwest.query(searchRange))
+            
+            return found
+
+
+
+
+
+
+
+
+if __name__ == '__main__':
+    
+    display_width = 1800
+    display_height = 800
+    
+    numPoints = 1000
+    nCapacity = 5
+    
+    boundary = Rectangle(display_width/2, display_height/2, display_width/2, display_height/2)
+    qtree = Quadtree(boundary, nCapacity)
+    
+    points = []
+    for i in range(numPoints):
+        new_point = Point(random.randrange(display_width), random.randrange(display_height), i)
+        points.append(new_point)
+        qtree.insert(new_point)
+    
+    
+    pygame.init()
+    
+    gameDisplay = pygame.display.set_mode((display_width,display_height))
+    pygame.display.set_caption('Quadtree Simulation')    
+    
+    black = (0,0,0)
+    white = (255, 255, 255)
+    clock = pygame.time.Clock()    
+    
+    
+    
+    
+    
+    crashed = False
+    
+    while not crashed:
+        
+        gameDisplay.fill(black)
+        dt = clock.tick(60)
+        #print(clock.get_fps())
+        
+        qtree.show(gameDisplay, white)
+        for each in points:
+            qtree.plotPoint(gameDisplay, white, each)
+        
+        
+        search_rect = Rectangle(600, 400, 125, 125)
+        rect = pygame.Rect(search_rect.x-search_rect.w, search_rect.y-search_rect.h,
+                           search_rect.w * 2, search_rect.h * 2)
+        pygame.draw.rect(gameDisplay, (255, 0,0), rect, width=1)
+        foundPoints = qtree.query(search_rect)
+        for each in foundPoints:
+            qtree.plotPoint(gameDisplay, (0,255, 0), each)
+        
+        
+        
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                crashed = True
+            #print(event)
+    
+        pygame.display.update()
+        
+    pygame.quit()
+    quit()    
+    
+    
+
